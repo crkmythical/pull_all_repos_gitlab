@@ -4,7 +4,7 @@
 # -d 指定克隆目录，默认./gitlab_repos
 # -g 最大组并发，默认3
 # -r 最大仓库克隆并发，默认5
-# 已存在仓库自动拉取更新（fetch + reset 强制同步默认分支）
+# 已存在仓库自动拉取更新（fetch + reset 强制同步默认分支，且创建并跟踪所有远程分支）
 # 克隆时拉取完整历史和所有分支（无浅克隆）
 # 并发控制，优雅退出信号处理
 # 记录所有克隆仓库SSH URL到日志repos.log
@@ -90,7 +90,7 @@ safe_dir() {
   echo "$1" | tr ' ' '_' | tr -cd '[:alnum:]_.-/'
 }
 
-# 克隆或更新仓库，支持全分支拉取和更新
+# 克隆或更新仓库，支持全分支拉取和更新所有远端分支
 safe_clone() {
   local repo_url="$1"
   local path_ns="$2"
@@ -105,10 +105,18 @@ safe_clone() {
     (
       cd "$dest_dir" || return
       git fetch --all --prune
+
       default_branch=$(git remote show origin | awk '/HEAD branch/ {print $NF}')
       [ -z "$default_branch" ] && default_branch="master"
+
       git checkout "$default_branch" || git checkout -b "$default_branch" "origin/$default_branch"
       git reset --hard "origin/$default_branch"
+
+      # 创建并跟踪所有远程分支
+      git branch -r | grep -v '\->' | while read -r remote; do
+        branch=${remote#origin/}
+        git branch --track "$branch" "$remote" 2>/dev/null || true
+      done
     )
     inc_cloned_count
     return 0
@@ -135,29 +143,26 @@ run_clone_bg() {
 }
 
 LAST_PROGRESS_TIME=0
-PROGRESS_INTERVAL=5  # 秒
+PROGRESS_INTERVAL=3  # 秒
 
 show_progress() {
   local now
   now=$(date +%s)
   if (( now - LAST_PROGRESS_TIME >= PROGRESS_INTERVAL )); then
-    printf "\r进度: 已完成 %d / %d，运行中 %d" "$CLONED_COUNT" "$TOTAL_COUNT" "$(jobs -rp | wc -l | tr -d ' ')"
+    printf "\r进度: 已完成 %d / %d，运行中 %d\n" "$CLONED_COUNT" "$TOTAL_COUNT" "$(jobs -rp | wc -l | tr -d ' ')"
     LAST_PROGRESS_TIME=$now
   fi
 }
 
-
-
 trap_cleanup() {
   log "⚠️ 捕获退出信号，终止所有后台任务..."
-  pkill -P $$ || true
   kill -- -$$ 2>/dev/null || true
   wait
   log "✅ 所有后台任务已终止，脚本退出。"
   exit 1
 }
 
-trap trap_cleanup INT TERM
+trap trap_cleanup INT TERM EXIT
 
 clone_with_limit() {
   local ssh_url="$1"
@@ -298,7 +303,7 @@ main() {
   log "✅ 全部项目拉取完成！"
 }
 
-trap trap_cleanup INT TERM
+trap trap_cleanup INT TERM EXIT
 
 main "$@"
 
