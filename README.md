@@ -1,107 +1,127 @@
-当然！这里是配合上面脚本的 **README**，方便你快速上手和使用：
+当然可以！下面是一个详细、结构清晰、易读易用的 README 模板，专门针对你这个带并发控制和信号捕获的 GitLab 多组多仓库克隆脚本：
 
 ---
 
-# GitLab 仓库批量递归克隆脚本
+# GitLab 多组多仓库并发克隆脚本
 
-## 简介
-
-此脚本用于递归拉取 GitLab 上的所有 Group（包含子组）以及个人空间下的所有项目，支持并发克隆，自动跳过已存在仓库，并实时显示进度和日志。
+> 这是一个用于递归拉取 GitLab 上所有组及子组中所有项目的 Bash 脚本，支持自建 GitLab 实例，具备组和仓库两级并发控制，支持信号捕获，方便安全地中断运行。
 
 ---
 
 ## 功能特点
 
-* 支持递归拉取 Group 及子组中的所有仓库
-* 支持拉取个人空间（非 Group）项目
-* 支持最大并发数限制（组级并发和仓库级并发）
-* 自动跳过已存在仓库
-* 支持命令行参数配置 Token、目录、并发数
-* 实时显示克隆进度
-* 支持 Ctrl+C 安全退出，自动终止所有子进程
-* 日志记录所有克隆过的仓库地址和失败仓库列表
-* 兼容 Bash 3+（无 flock，使用目录锁防止写冲突）
+* 递归遍历所有组和子组，拉取所有仓库
+* 同时支持拉取个人空间（非 Group）的项目
+* 支持指定 GitLab URL，兼容官方及自建 GitLab 实例
+* 支持命令行参数灵活配置：
+
+  * GitLab 私有 Token
+  * 克隆目录
+  * 组并发数限制
+  * 仓库并发数限制
+* 并发克隆，提高拉取效率
+* 支持 Ctrl+C 安全中断，自动终止所有后台克隆任务
+* 进度实时展示，方便掌握拉取状态
+* 日志记录所有克隆仓库地址与失败项目
 
 ---
 
 ## 环境依赖
 
-* `bash` 3 及以上版本
-* `curl`
-* `jq` （处理 JSON，建议安装最新版）
-* `git`
-* `md5sum`（大部分 Linux 系统默认自带）
+* Bash（推荐 4.x 以上，脚本也兼容部分老版本，但建议升级）
+* curl
+* jq
+* git
+* md5sum（Linux 标准工具，macOS 可用 `md5` 替代，脚本中可自行调整）
 
 ---
 
 ## 使用方法
 
-1. **准备：**
+### 1. 下载脚本并赋予执行权限
 
-   克隆脚本到本地，或者直接创建 `gitlab_clone.sh`，将脚本内容复制进去。
+```bash
+curl -O https://your-repo-url/your-script.sh
+chmod +x your-script.sh
+```
 
-2. **赋予执行权限：**
+### 2. 运行脚本
 
-   ```bash
-   chmod +x gitlab_clone.sh
-   ```
+```bash
+./your-script.sh -t <your_gitlab_token> [-u <gitlab_url>] [-d <clone_dir>] [-g <max_group_concurrent>] [-r <max_repo_concurrent>]
+```
 
-3. **执行脚本：**
+#### 参数说明
 
-   ```bash
-   ./gitlab_clone.sh -t <your_gitlab_personal_access_token> [-d <clone_directory>] [-g <max_group_concurrent>] [-r <max_repo_concurrent>]
-   ```
+| 参数                          | 说明                                   | 默认值                  | 是否必填 |
+| --------------------------- | ------------------------------------ | -------------------- | ---- |
+| `-t <token>`                | GitLab 私有访问令牌（Personal Access Token） | 无                    | 是    |
+| `-u <gitlab_url>`           | GitLab 服务器地址，支持自建 GitLab             | `https://gitlab.com` | 否    |
+| `-d <clone_dir>`            | 仓库克隆的本地根目录                           | `./gitlab_repos`     | 否    |
+| `-g <max_group_concurrent>` | 同时并发克隆组数量                            | `3`                  | 否    |
+| `-r <max_repo_concurrent>`  | 每个组内同时并发克隆仓库数量                       | `5`                  | 否    |
+| `-h`                        | 显示帮助信息                               | -                    | 否    |
 
-   参数说明：
+### 3. 示例
 
-   * `-t` GitLab 个人访问令牌（必填）
-   * `-d` 克隆目标目录（默认 `./gitlab_repos`）
-   * `-g` 最大组并发数（默认 3）
-   * `-r` 最大仓库并发数（默认 5）
-
-   示例：
-
-   ```bash
-   ./gitlab_clone.sh -t glpat-xxxxxxx -d /data/gitlab_repos -g 4 -r 10
-   ```
-
----
-
-## 目录结构说明
-
-* 所有仓库会被克隆到你指定的目录内，路径会根据仓库的 `path_with_namespace` 自动生成，路径会做简化防止过长。
-* `repos.log`：记录所有成功开始克隆的仓库的 Git 地址
-* `repos_fail.log`：记录克隆失败的仓库 Git 地址，方便后续重试
-* 运行过程中，控制台会实时显示当前克隆进度（已完成 / 总数 / 运行中任务数）
+```bash
+./pull_all_repos.sh -t glpat_xxx12345 -u https://gitlab.example.com -d /tmp/gitlab_clone -g 2 -r 4
+```
 
 ---
 
-## 终止脚本
+## 脚本工作流程简述
 
-* 按 `Ctrl+C` 可以安全终止脚本，同时会自动结束所有子进程，避免孤儿进程。
+1. 获取所有顶层组，递归遍历组和子组
+2. 拉取每个组下的所有项目（仓库）
+3. 另外拉取用户个人空间（非组）项目
+4. 使用信号捕获保证 `Ctrl+C` 能优雅终止所有正在执行的克隆任务
+5. 所有克隆仓库的 SSH 地址会被记录在 `repos.log`
+6. 克隆失败的仓库会记录在 `repos_fail.log`
+7. 显示实时进度：已完成仓库数 / 总仓库数 / 当前活跃克隆任务数
 
 ---
 
 ## 注意事项
 
-* Token 权限应至少包含：`api` 或 `read_api`，并且有权限访问对应的 Group 和项目。
-* 网络环境良好，避免中途网络抖动导致克隆失败。
-* 日志文件在指定克隆目录下，可随时查看。
+* 请确保 GitLab Token 具备读取组和项目权限。
+* 建议提前配置好 SSH 免密登录，避免每个仓库克隆时频繁输入密码。
+* 并发数请根据本机性能和网络状况合理配置，避免过多任务导致拥堵。
+* macOS 用户如遇 `md5sum` 不可用，可将脚本中 `md5sum` 替换为 `md5 -q`。
 
 ---
 
 ## 常见问题
 
-* **jq 命令找不到？**
+### Q: Ctrl+C 后进程没有完全退出怎么办？
 
-  安装 jq：
+* 脚本设计成进程组组长，捕获 SIGINT/SIGTERM 后会终止所有子进程，确保不会有残留后台任务。
+* 请确认脚本以 Bash 运行，且当前 shell 允许发送信号。
+* 若仍有问题，请尝试手动 `ps` 查看残留 clone 进程，杀死它们。
 
-  ```bash
-  sudo apt install jq       # Debian/Ubuntu
-  brew install jq           # macOS (Homebrew)
-  ```
+### Q: 日志文件在哪？
 
-* **git clone 失败？**
+* 克隆仓库 SSH 地址会写入 `${CLONE_BASE_DIR}/repos.log`
+* 克隆失败的仓库 SSH 地址会写入 `${CLONE_BASE_DIR}/repos_fail.log`
 
-  请检查 Token 是否有权限、网络是否通畅、GitLab 地址是否正确。
+---
 
+## 版本历史
+
+* v1.0 初始版本，支持递归组与子组克隆
+* v1.1 增加并发限制与信号捕获支持
+* v1.2 增加自定义 GitLab URL，完善日志与进度显示
+
+---
+
+## 贡献
+
+欢迎提交 issue 和 PR，欢迎加星 ⭐️ ！
+
+---
+
+## 许可证
+
+MIT License
+
+---
