@@ -122,7 +122,7 @@ safe_clone() {
 
   log "⬇️ 克隆仓库: $repo_path"
   write_log "$repo_url"
-  if git clone --depth=1 "$repo_url" "$dest_dir"; then
+  if git clone -q --depth=1 "$repo_url" "$dest_dir"; then
     inc_cloned_count
     return 0
   else
